@@ -1,25 +1,29 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from datetime import datetime
 
-st.set_page_config(page_title="Workstream Visualizer & Bottleneck Detector", layout="wide")
+st.set_page_config(page_title="Workstream Visualizer & Milestones Engine", layout="wide")
 
-st.title("📊 Enterprise Workstream Visualizer & Automated Bottleneck Analyzer")
-st.markdown("Upload your project schedule spreadsheet (using **DD/MM/YYYY** dates) to instantly map dependencies and apply custom status color codes.")
+st.title("📊 Enterprise Workstream Visualizer & Milestone Timeline Matrix")
+st.markdown("Upload your hierarchy spreadsheet (**DD/MM/YYYY** dates). **Tasks** and **Sub Tasks** render as floating timeline tracks, while **Milestones** render as sharp structural triangles or green completion checkmarks.")
 
 # --- SIDEBAR: DATA UPLOAD & SOURCE MANAGEMENT ---
 st.sidebar.header("📁 Data Source Configuration")
 upload_mode = st.sidebar.radio("Choose Input Method:", ["Upload Spreadsheet (Excel / CSV)", "Manual Live Entry"])
 
-# Pre-baked default demo dataset showing DD/MM/YYYY format compatibility and custom colors
+# Robust demo dataset illustrating Task, Sub Task, and Milestone structural mapping
 demo_data = [
-    {"name": "Market Research & Analysis", "start": "01/07/2026", "end": "12/07/2026", "resource": "Product Team", "status": "Green"},
-    {"name": "UI/UX Wireframing", "start": "10/07/2026", "end": "22/07/2026", "resource": "Design Studio", "status": "Green"},
-    {"name": "Backend Core Architecture", "start": "20/07/2026", "end": "15/08/2026", "resource": "Dev Engineering", "status": "Red"},
-    {"name": "Frontend Module Assembly", "start": "05/08/2026", "end": "01/09/2026", "resource": "Dev Engineering", "status": "Amber"},
-    {"name": "System Integration Testing", "start": "02/09/2026", "end": "25/09/2026", "resource": "QA Automation", "status": "Amber"}, 
-    {"name": "User Acceptance Testing", "start": "26/09/2026", "end": "15/10/2026", "resource": "Product Team", "status": "Green"}
+    {"name": "1.0 Core Market Analysis Framework", "start": "01/07/2026", "end": "15/07/2026", "resource": "Product Team", "status": "Green", "type": "Task"},
+    {"name": "   1.1 Competitor Benchmarking", "start": "01/07/2026", "end": "08/07/2026", "resource": "Product Team", "status": "Green", "type": "Sub Task"},
+    {"name": "   1.2 User Persona Survey Pool", "start": "06/07/2026", "end": "14/07/2026", "resource": "Design Studio", "status": "Amber", "type": "Sub Task"},
+    {"name": "⭐ Phase 1 Strategy Sign-Off Gate", "start": "15/07/2026", "end": "15/07/2026", "resource": "Product Team", "status": "Green", "type": "Milestone"}, # COMPLETED (Green Status) -> Render Green Checkmark
+    
+    {"name": "2.0 System Architecture & Backend Base", "start": "15/07/2026", "end": "15/08/2026", "resource": "Dev Engineering", "status": "Amber", "type": "Task"},
+    {"name": "   2.1 Database Schema Mapping", "start": "15/07/2026", "end": "28/07/2026", "resource": "Dev Engineering", "status": "Green", "type": "Sub Task"},
+    {"name": "   2.2 Auth API Integration Endpoints", "start": "25/07/2026", "end": "12/08/2026", "resource": "Dev Engineering", "status": "Red", "type": "Sub Task"},
+    {"name": "🚩 Security Audit Clearance Review", "start": "15/08/2026", "end": "15/08/2026", "resource": "QA Automation", "status": "Amber", "type": "Milestone"}  # INCOMPLETE (Amber/Red Status) -> Render Triangle
 ]
 
 final_df = None
@@ -27,7 +31,7 @@ final_df = None
 if upload_mode == "Upload Spreadsheet (Excel / CSV)":
     st.sidebar.subheader("Excel / CSV Uploader")
     uploaded_file = st.sidebar.file_uploader(
-        "Upload file (Columns required: Workstream Name, Start Date, End Date, Assigned Resource, Status)", 
+        "Upload file (Required: Workstream Name, Start Date, End Date, Assigned Resource, Status, Type)", 
         type=["xlsx", "csv"]
     )
     
@@ -43,123 +47,180 @@ if upload_mode == "Upload Spreadsheet (Excel / CSV)":
                 "Start Date": "start", "start date": "start", "Start": "start", "start": "start",
                 "End Date": "end", "end date": "end", "End": "end", "end": "end",
                 "Assigned Resource": "resource", "assigned resource": "resource", "Resource": "resource", "resource": "resource",
-                "Status": "status", "status": "status", "STATUS": "status"
+                "Status": "status", "status": "status", "STATUS": "status",
+                "Type": "type", "type": "type", "TYPE": "type"
             }
             raw_df = raw_df.rename(columns=rename_map)
             
-            required_cols = ['name', 'start', 'end', 'resource', 'status']
+            required_cols = ['name', 'start', 'end', 'resource', 'status', 'type']
             if all(col in raw_df.columns for col in required_cols):
                 final_df = raw_df[required_cols].dropna(subset=['name', 'start', 'end']).copy()
-                st.sidebar.success("✅ Dataset loaded successfully!")
+                st.sidebar.success("✅ Architecture dataset parsed successfully!")
             else:
                 missing = [c for c in required_cols if c not in raw_df.columns]
-                st.sidebar.error(f"❌ Structural Mismatch. Missing columns: {missing}")
+                st.sidebar.error(f"❌ Column Mapping Error. Missing fields: {missing}")
         except Exception as e:
-            st.sidebar.error(f"Error parsing file: {e}")
+            st.sidebar.error(f"File system parse crash: {e}")
     else:
-        st.info("👋 Showing default demo framework data. Drag and drop your spreadsheet into the sidebar box to test your own scheduling updates.")
+        st.info("👋 Displaying structural demo hierarchy data. Drag your active tracking schedule spreadsheet into the sidebar uploader box.")
         final_df = pd.DataFrame(demo_data)
 
 else:
     if "manual_workstreams" not in st.session_state:
         st.session_state.manual_workstreams = demo_data.copy()
         
-    st.sidebar.subheader("Create New Entry")
-    m_name = st.sidebar.text_input("Workstream Name", placeholder="e.g., API Deployment")
-    m_res = st.sidebar.text_input("Assigned Resource / Team", placeholder="e.g., DevOps")
-    m_start = st.sidebar.date_input("Start Date", datetime.today())
-    m_end = st.sidebar.date_input("End Date", datetime.today())
-    m_status = st.sidebar.selectbox("Status Color", ["Green", "Amber", "Red"])
+    st.sidebar.subheader("Create Hierarchical Row Entry")
+    m_name = st.sidebar.text_input("Row Name (e.g.,   1.1 Subtask Alpha)")
+    m_res = st.sidebar.text_input("Assigned Team Pool", placeholder="e.g., DevOps Group")
+    m_start = st.sidebar.date_input("Start Date Anchor", datetime.today())
+    m_end = st.sidebar.date_input("End Date Anchor", datetime.today())
+    m_status = st.sidebar.selectbox("Status Color Map", ["Green", "Amber", "Red"])
+    m_type = st.sidebar.selectbox("Structural Classification Type", ["Task", "Sub Task", "Milestone"])
     
-    if st.sidebar.button("Add Item"):
+    if st.sidebar.button("Add Item Row"):
         if m_name and m_res:
             st.session_state.manual_workstreams.append({
                 "name": m_name, 
                 "start": m_start.strftime("%d/%m/%Y"), 
                 "end": m_end.strftime("%d/%m/%Y"), 
                 "resource": m_res,
-                "status": m_status
+                "status": m_status,
+                "type": m_type
             })
             st.rerun()
             
-    if st.button("🗑️ Clear Live Table Entries"):
+    if st.button("🗑️ Reset Tracking Table Workspace"):
         st.session_state.manual_workstreams = []
         st.rerun()
         
     final_df = pd.DataFrame(st.session_state.manual_workstreams)
 
 
+# --- PROCESSING PIPELINE ENGINE ---
 if final_df is not None and not final_df.empty:
     
+    # Strictly handle DD/MM/YYYY formatting logic constraint
     final_df['start'] = pd.to_datetime(final_df['start'], dayfirst=True, errors='coerce')
     final_df['end'] = pd.to_datetime(final_df['end'], dayfirst=True, errors='coerce')
     final_df = final_df.dropna(subset=['start', 'end'])
+    
+    # Text standardization rules
     final_df['status'] = final_df['status'].astype(str).str.strip().str.capitalize()
+    final_df['type'] = final_df['type'].astype(str).str.strip().title()
     
-    final_df['System Notes'] = 'Row OK'
-    for idx, row in final_df.iterrows():
-        if row['end'] < row['start']:
-            final_df.at[idx, 'System Notes'] = f"⚠️ Chronology Error: End date precedes Start date."
-
     st.subheader("📋 Active Workstream Schedule Audit")
-    
     display_df = final_df.copy()
     display_df['start'] = display_df['start'].dt.strftime('%d/%m/%Y')
     display_df['end'] = display_df['end'].dt.strftime('%d/%m/%Y')
     
     st.dataframe(
         display_df.rename(columns={
-            "name": "Workstream", "start": "Start Date", "end": "End Date", "resource": "Resource Assigned", "status": "Excel Status"
-        })[["Workstream", "Start Date", "End Date", "Resource Assigned", "Excel Status", "System Notes"]], 
+            "name": "Line Item / Deliverable", "start": "Start Date", "end": "End Date", "resource": "Owner/Resource", "status": "Status", "type": "WBS Classification"
+        })[["Line Item / Deliverable", "WBS Classification", "Start Date", "End Date", "Owner/Resource", "Status"]], 
         use_container_width=True
     )
 
-    # --- GRAPHIC VISUALIZATION LAYOUT ---
-    st.subheader("📈 Gantt Timeline Dependency Graph")
+    # --- ADVANCED GRAPHIC ENGINE: GANTT + MILESTONE CONVERGENCE ---
+    st.subheader("📈 Integrated Gantt Timeline & Milestone Dependency Tracking Graph")
     
-    # Premium high-contrast color scheme tailored for clean text readability
-    excel_status_palette = {
-        'Green': '#27ae60',   # Rich Emerald
-        'Amber': '#f39c12',   # Vivid Amber
-        'Red': '#c0392b'      # Deep Crimson
+    # Isolate tasks and sub-tasks for the classic pseudo-3D baseline bar tracks
+    bars_df = final_df[final_df['type'].isin(['Task', 'Sub Task'])].copy()
+    
+    # Isolate milestones into separate state categories based on your business logic criteria
+    milestones_all = final_df[final_df['type'] == 'Milestone'].copy()
+    
+    # Criteria: "Green" Status Milestones = Completed. "Amber" or "Red" = Incomplete
+    completed_milestones = milestones_all[milestones_all['status'] == 'Green'].copy()
+    pending_milestones = milestones_all[milestones_all['status'].isin(['Amber', 'Red'])].copy()
+
+    # Base Palette for Gantt tracks
+    gantt_palette = {
+        'Task': '#2c3e50',      # Dark Charcoal Navy for prominent Top-Level Tasks
+        'Sub Task': '#7f8c8d'   # Clean Steel Gray for nested supporting sub-tasks
     }
     
-    fig = px.timeline(
-        final_df, 
-        x_start="start", 
-        x_end="end", 
-        y="name", 
-        color="status",
-        hover_data=["resource", "System Notes"],
-        color_discrete_map=excel_status_palette,
-        title="Interactive Gantt Chart (Colored by Excel Status Column)"
+    # Generate background structural matrix timeline
+    if not bars_df.empty:
+        fig = px.timeline(
+            bars_df, 
+            x_start="start", 
+            x_end="end", 
+            y="name", 
+            color="type",
+            hover_data=["resource", "status"],
+            color_discrete_map=gantt_palette
+        )
+    else:
+        # Fallback if user uploads a sheet entirely composed of milestones
+        fig = go.Figure()
+
+    # 1. Overlay PENDING MILESTONES (Render as sharp Orange/Amber Triangles)
+    if not pending_milestones.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=pending_milestones['start'],
+                y=pending_milestones['name'],
+                mode='markers',
+                marker=dict(
+                    symbol='triangle-up',
+                    size=16,
+                    color='#e67e22', # Warning Safety Amber/Orange
+                    line=dict(color='#d35400', width=2)
+                ),
+                name='Milestone (Pending/At Risk)',
+                hovertemplate="<b>%{y}</b><br>Target: %{x|%d/%m/%Y}<br>Status: Pending/Active<extra></extra>"
+            )
+        )
+
+    # 2. Overlay COMPLETED MILESTONES (Render as Green Ticks/Checkmarks)
+    if not completed_milestones.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=completed_milestones['start'],
+                y=completed_milestones['name'],
+                mode='markers',
+                marker=dict(
+                    symbol='line-ew-open', # Generates clean structural crossing slash lines mimicking a checklist mark
+                    size=18,
+                    color='#27ae60', # Vibrant Success Emerald Green
+                    line=dict(color='#27ae60', width=4)
+                ),
+                name='Milestone (Completed Check)',
+                hovertemplate="<b>%{y}</b><br>Achieved: %{x|%d/%m/%Y}<br>Status: Complete ✅<extra></extra>"
+            )
+        )
+
+    # Sync and format the universal chart configuration settings
+    # Extract complete ordered unique items to maintain proper list sequencing 
+    y_axis_ordering = list(final_df['name'].unique())
+    
+    fig.update_yaxes(
+        categoryorder="array",
+        categoryarray=y_axis_ordering,
+        autorange="reversed" # Preserve standard layout orientation cascading downward
     )
     
-    fig.update_yaxes(autorange="reversed")
     fig.update_layout(
-        xaxis_title="Calendar Timeline",
-        yaxis_title="Registered Project Workstreams",
-        legend_title="Excel Status Override",
-        height=450,
+        xaxis_title="Calendar Framework Timeline",
+        yaxis_title="WBS Hierarchy Structure Items",
+        legend_title="Schedule Component Legend",
+        height=550,
         margin=dict(l=20, r=20, t=40, b=20),
-        # Light gray canvas gridlines to bounce light off the shapes
-        plot_bgcolor='#f8f9fa'
+        plot_bgcolor='#f8f9fa',
+        hovermode="closest"
     )
     
-    # --- STYLING ENGINE FOR THE 3D GLASS FLOATING LOOK ---
+    # Apply structural pseudo-3D border lines to standard Gantt track traces if present
     fig.update_traces(
-        xhoverformat="%d/%m/%Y",
         marker=dict(
-            line=dict(
-                color='#34495e', # Crisp Charcoal structural border around every single bar
-                width=2          # Generates a deliberate shadow separation effect
-            ),
-            opacity=0.92         # Subtle translucency simulation
+            line=dict(color='#2c3e50', width=1.5),
+            opacity=0.9
         ),
-        insidetextanchor="middle"
+        selector=dict(type='bar') # Target only the Gantt track blocks, avoiding scatter markers
     )
     
+    fig.update_xaxes(showgrid=True, gridcolor='#eaf0f1')
     st.plotly_chart(fig, use_container_width=True)
 
 else:
-    st.warning("⚠️ Schedule tracking database empty. Upload an administrative document or toggle manually inside the sidebar to initialize visual plotting blocks.")
+    st.warning("⚠️ Workstream architecture tracking engine blank. Populate fields via manual entries or document loading blocks.")
