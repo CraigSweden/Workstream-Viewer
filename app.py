@@ -7,22 +7,22 @@ from datetime import datetime, date
 st.set_page_config(page_title="Hierarchical Workstream Matrix", layout="wide")
 
 st.title("📊 Enterprise Hierarchical Workstream & Milestone Matrix")
-st.markdown("Upload your structured schedule spreadsheet (**DD/MM/YYYY**). Sub Tasks sit under their Parent Tasks, and **Milestones are plotted directly on top of the task timeline lines**.")
+st.markdown("Upload your structured schedule spreadsheet (**DD/MM/YYYY**). Main Tasks are colored by status. Sub Tasks are gray with dark blue borders. Milestones are plotted directly inline on parent task lines.")
 
 # --- SIDEBAR: DATA UPLOAD & SOURCE MANAGEMENT ---
 st.sidebar.header("📁 Data Source Configuration")
 upload_mode = st.sidebar.radio("Choose Input Method:", ["Upload Spreadsheet (Excel / CSV)", "Manual Live Entry"])
 
-# Demo dataset reflecting structural mapping hierarchy
+# Demo dataset reflecting structural mapping hierarchy and custom styles
 demo_data = [
     {"name": "1.0 Core Architecture Framework", "start": "01/07/2026", "end": "30/07/2026", "resource": "Product Team", "status": "Green", "type": "Task", "parent": ""},
     {"name": "   1.1 Competitor Benchmarking", "start": "01/07/2026", "end": "12/07/2026", "resource": "Product Team", "status": "Green", "type": "Sub Task", "parent": "1.0 Core Architecture Framework"},
     {"name": "   1.2 User Persona Survey Pool", "start": "10/07/2026", "end": "28/07/2026", "resource": "Design Studio", "status": "Amber", "type": "Sub Task", "parent": "1.0 Core Architecture Framework"},
-    {"name": "⭐ Phase 1 Strategy Sign-Off Gate", "start": "", "end": "15/07/2026", "resource": "Product Team", "status": "Green", "type": "Milestone", "parent": "1.0 Core Architecture Framework"}, # Plots directly on "1.0 Core Architecture Framework"
+    {"name": "⭐ Phase 1 Strategy Sign-Off Gate", "start": "", "end": "15/07/2026", "resource": "Product Team", "status": "Green", "type": "Milestone", "parent": "1.0 Core Architecture Framework"}, 
     
-    {"name": "2.0 Database Core Implementation", "start": "15/07/2026", "end": "15/08/2026", "resource": "Dev Engineering", "status": "Amber", "type": "Task", "parent": ""},
+    {"name": "2.0 Database Core Implementation", "start": "15/07/2026", "end": "15/08/2026", "resource": "Dev Engineering", "status": "Red", "type": "Task", "parent": ""},
     {"name": "   2.1 Schema Definition & Mapping", "start": "15/07/2026", "end": "02/08/2026", "resource": "Dev Engineering", "status": "Green", "type": "Sub Task", "parent": "2.0 Database Core Implementation"},
-    {"name": "🚩 Security Audit Clearance Review", "start": "", "end": "20/07/2026", "resource": "QA Automation", "status": "Green", "type": "Milestone", "parent": "2.0 Database Core Implementation"} # Achieved milestone on parent line
+    {"name": "🚩 Security Audit Clearance Review", "start": "", "end": "20/07/2026", "resource": "QA Automation", "status": "Green", "type": "Milestone", "parent": "2.0 Database Core Implementation"} 
 ]
 
 final_df = None
@@ -109,137 +109,95 @@ if final_df is not None and not final_df.empty:
     final_df['type'] = final_df['type'].astype(str).str.strip().str.title()
     final_df['parent'] = final_df['parent'].astype(str).str.strip()
     
+    # --- TYPOGRAPHIC HIERARCHY INJECTION FOR AUDIT TABLE ---
+    # Custom HTML formatting applied inline to clearly show Tasks vs Sub Tasks
+    def apply_html_fonts(row):
+        if row['type'] == 'Task':
+            # Bold Georgia Serif uppercase for executive Tasks
+            return f"<span style='font-family: Georgia, serif; font-weight: bold; color: #2c3e50; font-size: 14px;'>{row['name'].upper()}</span>"
+        elif row['type'] == 'Sub Task':
+            # Italicized modern clean Sans-Serif for nested Sub Tasks
+            return f"<span style='font-family: \"Courier New\", monospace; font-style: italic; color: #555555; padding-left: 15px;'>↳ {row['name']}</span>"
+        else:
+            return f"<span style='font-family: Arial, sans-serif; font-weight: bold; color: #16a085;'>⭐ {row['name']}</span>"
+
     st.subheader("📋 Active Workstream Schedule Audit")
     display_df = final_df.copy()
+    display_df['Formatted Name'] = display_df.apply(apply_html_fonts, axis=1)
     display_df['start'] = display_df['start'].dt.strftime('%d/%m/%Y').fillna("-")
     display_df['end'] = display_df['end'].dt.strftime('%d/%m/%Y')
     
-    st.dataframe(
+    # Render with HTML safety turned off to let fonts execute
+    st.write(
         display_df.rename(columns={
-            "name": "Line Item / Deliverable", "start": "Start Date", "end": "End Date", "resource": "Owner/Resource", "status": "Status", "type": "Classification", "parent": "Parent Link"
-        })[["Line Item / Deliverable", "Classification", "Parent Link", "Start Date", "End Date", "Owner/Resource", "Status"]], 
-        use_container_width=True
+            "Formatted Name": "Line Item / Deliverable", "start": "Start Date", "end": "End Date", "resource": "Owner/Resource", "status": "Status", "type": "Classification"
+        })[["Line Item / Deliverable", "Classification", "Start Date", "End Date", "Owner/Resource", "Status"]].to_html(escape=False, index=False), 
+        unsafe_allow_html=True
     )
+    st.markdown("<br>", unsafe_allow_html=True)
 
     # --- GRAPHIC ENGINE: HIERARCHY MATRIX ---
     st.subheader("📈 Gantt Timeline & Inline Milestone Dependency Graph")
     
-    # 1. Separate visible Timeline Bars (Tasks & Sub Tasks)
-    bars_df = final_df[final_df['type'].isin(['Task', 'Sub Task'])].dropna(subset=['start']).copy()
-    
-    # 2. Separate Milestones
+    # Separate the elements
+    tasks_df = final_df[final_df['type'] == 'Task'].dropna(subset=['start']).copy()
+    subtasks_df = final_df[final_df['type'] == 'Sub Task'].dropna(subset=['start']).copy()
     milestones_df = final_df[final_df['type'] == 'Milestone'].copy()
 
-    # Define color scheme for Timeline bars
-    gantt_palette = {
-        'Task': '#2c3e50',      # Executive Charcoal Navy
-        'Sub Task': '#95a5a6'   # Soft Steel Gray for nested sub-tasks
+    fig = go.Figure()
+
+    # Color definitions matching status
+    status_colors = {
+        'Green': '#27ae60',   # Emerald
+        'Amber': '#f39c12',   # Warm Orange/Amber
+        'Red': '#e74c3c'      # Crimson
     }
-    
-    if not bars_df.empty:
-        fig = px.timeline(
-            bars_df, 
-            x_start="start", 
-            x_end="end", 
-            y="name", 
-            color="type",
-            hover_data=["resource", "status"],
-            color_discrete_map=gantt_palette
-        )
-    else:
-        fig = go.Figure()
+
+    # 1. Plot MAIN TASKS (Colored by Status Column)
+    for status_val, color_hex in status_colors.items():
+        subset = tasks_df[tasks_df['status'] == status_val]
+        if not subset.empty:
+            # Calculate duration for plotly base timeline emulation
+            for _, row in subset.iterrows():
+                fig.add_trace(go.Bar(
+                    x=[row['end'] - row['start']],
+                    base=[row['start']],
+                    y=[row['name']],
+                    orientation='h',
+                    marker=dict(
+                        color=color_hex,
+                        line=dict(color='#1a252f', width=1.5)
+                    ),
+                    name=f"Task: {status_val}",
+                    legendgroup=f"task_{status_val}",
+                    showlegend=False if f"task_{status_val}" in [t.legendgroup for t in fig.data] else True,
+                    hovertemplate=f"<b>{row['name']}</b><br>Owner: {row['resource']}<br>Status: {status_val}<extra></extra>"
+                ))
+
+    # 2. Plot SUB TASKS (Light Gray with Dark Blue Border)
+    if not subtasks_df.empty:
+        for _, row in subtasks_df.iterrows():
+            fig.add_trace(go.Bar(
+                x=[row['end'] - row['start']],
+                base=[row['start']],
+                y=[row['name']],
+                orientation='h',
+                marker=dict(
+                    color='#eaeded',      # Soft Premium Light Gray
+                    line=dict(color='#1b4f72', width=2) # Deep Dark Blue Outline Border
+                ),
+                name="Sub Task",
+                legendgroup="subtask",
+                showlegend=False if "subtask" in [t.legendgroup for t in fig.data] else True,
+                hovertemplate=f"<b>Subtask: {row['name']}</b><br>Owner: {row['resource']}<extra></extra>"
+            ))
 
     # 3. Dynamic Inline Milestones Layer
     if not milestones_df.empty:
         today_dt = pd.to_datetime(date.today())
         
-        # Rule: If milestone has a valid Parent Task, map it to that parent line row!
-        # If no parent task is written, fall back to its own name line.
         milestones_df['y_axis_target'] = milestones_df.apply(
             lambda r: r['parent'] if (r['parent'] != "" and r['parent'] != "nan") else r['name'], axis=1
         )
         
-        # Split milestones for conditional formatting
-        green_future = milestones_df[(milestones_df['status'] == 'Green') & (milestones_df['end'] > today_dt)]
-        green_achieved = milestones_df[(milestones_df['status'] == 'Green') & (milestones_df['end'] <= today_dt)]
-        amber_milestones = milestones_df[milestones_df['status'] == 'Amber']
-        red_milestones = milestones_df[milestones_df['status'] == 'Red']
-
-        # Category A: Green Future -> GREEN TRIANGLE
-        if not green_future.empty:
-            fig.add_trace(go.Scatter(
-                x=green_future['end'], y=green_future['y_axis_target'], mode='markers',
-                marker=dict(symbol='triangle-up', size=16, color='#27ae60', line=dict(color='#1e8449', width=1.5)),
-                name='Milestone: Trending Well (Future Triangle)',
-                text=green_future['name'],
-                hovertemplate="<b>Milestone: %{text}</b><br>Target Date: %{x|%d/%m/%Y}<br>Plotted on Track: %{y}<extra></extra>"
-            ))
-
-        # Category B: Green Past/Present -> GREEN TICK
-        if not green_achieved.empty:
-            fig.add_trace(go.Scatter(
-                x=green_achieved['end'], y=green_achieved['y_axis_target'], mode='markers',
-                marker=dict(symbol='line-ew-open', size=20, color='#27ae60', line=dict(color='#27ae60', width=4.5)),
-                name='Milestone: Achieved (Tick ✅)',
-                text=green_achieved['name'],
-                hovertemplate="<b>Milestone: %{text}</b><br>Achieved Date: %{x|%d/%m/%Y}<br>Plotted on Track: %{y}<extra></extra>"
-            ))
-
-        # Category C: Amber -> AMBER TRIANGLE
-        if not amber_milestones.empty:
-            fig.add_trace(go.Scatter(
-                x=amber_milestones['end'], y=amber_milestones['y_axis_target'], mode='markers',
-                marker=dict(symbol='triangle-up', size=16, color='#f39c12', line=dict(color='#d35400', width=1.5)),
-                name='Milestone: At Risk (Amber)',
-                text=amber_milestones['name'],
-                hovertemplate="<b>Milestone: %{text}</b><br>Target Date: %{x|%d/%m/%Y}<br>Plotted on Track: %{y}<extra></extra>"
-            ))
-
-        # Category D: Red -> RED TRIANGLE
-        if not red_milestones.empty:
-            fig.add_trace(go.Scatter(
-                x=red_milestones['end'], y=red_milestones['y_axis_target'], mode='markers',
-                marker=dict(symbol='triangle-up', size=16, color='#e74c3c', line=dict(color='#c0392b', width=1.5)),
-                name='Milestone: Delayed (Red)',
-                text=red_milestones['name'],
-                hovertemplate="<b>Milestone: %{text}</b><br>Target Date: %{x|%d/%m/%Y}<br>Plotted on Track: %{y}<extra></extra>"
-            ))
-
-    # --- ADVANCED AXIS ORDERING SYSTEM ---
-    # Group sub-tasks logically under their main parent tasks
-    ordered_y_axis = []
-    main_tasks = final_df[final_df['type'] == 'Task']['name'].unique()
-    
-    for task in main_tasks:
-        ordered_y_axis.append(task)
-        # Find all subtasks linked to this parent task
-        subtasks = final_df[(final_df['type'] == 'Sub Task') & (final_df['parent'] == task)]['name'].unique()
-        ordered_y_axis.extend(subtasks)
-        
-    # Pick up any loose items that weren't caught in the hierarchy loops
-    for item in final_df['name'].unique():
-        if item not in ordered_y_axis and final_df[final_df['name'] == item]['type'].values[0] != 'Milestone':
-            ordered_y_axis.append(item)
-
-    fig.update_yaxes(categoryorder="array", categoryarray=ordered_y_axis, autorange="reversed")
-    
-    fig.update_layout(
-        xaxis_title="Calendar Framework Timeline",
-        yaxis_title="Logical WBS Hierarchy",
-        legend_title="Schedule Components",
-        height=550,
-        margin=dict(l=20, r=20, t=40, b=20),
-        plot_bgcolor='#f8f9fa',
-        hovermode="closest"
-    )
-    
-    fig.update_traces(
-        marker=dict(line=dict(color='#2c3e50', width=1.5), opacity=0.85),
-        selector=dict(type='bar')
-    )
-    
-    fig.update_xaxes(showgrid=True, gridcolor='#eaf0f1')
-    st.plotly_chart(fig, use_container_width=True)
-
-else:
-    st.warning("⚠️ Workstream database empty. Upload an Excel file containing a Parent Task column to render hierarchy.")
+        green_future = milestones_df
